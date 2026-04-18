@@ -4,29 +4,32 @@ import { useWeb3 } from '../context/Web3Context';
 import { uploadJSON } from '../utils/pinata';
 import { parseEth } from '../utils/helpers';
 import toast from 'react-hot-toast';
-import { 
-  Briefcase, 
-  DollarSign, 
-  FileText, 
-  Upload,
-  AlertCircle,
-  CheckCircle
-} from 'lucide-react';
+import { Briefcase, DollarSign, FileText, Upload, AlertCircle, Lock, Info } from 'lucide-react';
+
+const Field = ({ label, hint, required, children }) => (
+  <div>
+    <div className="flex items-center justify-between mb-2">
+      <label className="text-sm font-medium text-slate-300">
+        {label} {required && <span className="text-red-400">*</span>}
+      </label>
+      {hint && <span className="text-xs text-slate-600">{hint}</span>}
+    </div>
+    {children}
+  </div>
+);
+
+const inputClass = "w-full bg-slate-700/30 border border-slate-700/60 rounded-xl px-4 py-3 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 transition-all";
 
 const CreateJob = () => {
   const { account, contract, connectWallet } = useWeb3();
   const navigate = useNavigate();
-  
+
   const [formData, setFormData] = useState({
-    title: '',
-    description: '',
-    requirements: '',
-    budget: '',
-    deadline: '',
-    skills: '',
+    title: '', description: '', requirements: '',
+    budget: '', deadline: '', skills: '',
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [step, setStep] = useState(1);
+  const [step, setStep] = useState(0); // 0 = idle, 1 = ipfs, 2 = tx, 3 = confirming
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -35,84 +38,66 @@ const CreateJob = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    
-    if (!account) {
-      toast.error('Please connect your wallet first');
-      return;
-    }
-
+    if (!account) { toast.error('Please connect your wallet first'); return; }
     if (!formData.title || !formData.description || !formData.budget) {
-      toast.error('Please fill all required fields');
-      return;
+      toast.error('Please fill all required fields'); return;
     }
 
     setIsSubmitting(true);
-    const loadingToast = toast.loading('Creating job on blockchain...');
+    const t = toast.loading('Creating job...');
 
     try {
-      // Step 1: Upload requirements to IPFS
       setStep(1);
-      const requirementsData = {
+      toast.loading('Uploading to IPFS...', { id: t });
+      const ipfsHash = await uploadJSON({
         title: formData.title,
         description: formData.description,
         requirements: formData.requirements,
         deadline: formData.deadline,
-        skills: formData.skills.split(',').map(s => s.trim()),
+        skills: formData.skills.split(',').map(s => s.trim()).filter(Boolean),
         createdAt: new Date().toISOString(),
-      };
-      
-      toast.loading('Uploading to IPFS...', { id: loadingToast });
-      const ipfsHash = await uploadJSON(requirementsData, `job-${Date.now()}`);
-      
-      // Step 2: Create job on blockchain
+      }, `job-${Date.now()}`);
+
       setStep(2);
-      toast.loading('Confirm transaction in MetaMask...', { id: loadingToast });
-      
-      const budgetWei = parseEth(formData.budget);
-      
+      toast.loading('Confirm in MetaMask...', { id: t });
       const tx = await contract.createJob(
         formData.title,
         formData.description,
         ipfsHash,
-        { value: budgetWei }
+        { value: parseEth(formData.budget) }
       );
 
-      // Step 3: Wait for confirmation
       setStep(3);
-      toast.loading('Waiting for confirmation...', { id: loadingToast });
-      
+      toast.loading('Confirming on-chain...', { id: t });
       const receipt = await tx.wait();
-      
-      // Get job ID from event
-      const event = receipt.logs.find(
-        log => log.fragment?.name === 'JobCreated'
-      );
+
+      const event = receipt.logs.find(log => log.fragment?.name === 'JobCreated');
       const jobId = event ? event.args[0].toString() : 'unknown';
 
-      toast.success(`Job created successfully! ID: ${jobId}`, { id: loadingToast });
+      toast.success(`Job #${jobId} created!`, { id: t });
       navigate(`/jobs/${jobId}`);
-      
     } catch (error) {
-      console.error('Error creating job:', error);
-      toast.error(error.reason || 'Failed to create job', { id: loadingToast });
+      toast.error(error.reason || 'Failed to create job', { id: t });
     } finally {
       setIsSubmitting(false);
-      setStep(1);
+      setStep(0);
     }
   };
 
+  const stepLabels = ['', 'Uploading to IPFS...', 'Confirm in MetaMask...', 'Confirming on-chain...'];
+
   if (!account) {
     return (
-      <div className="max-w-2xl mx-auto text-center py-20">
-        <div className="bg-slate-800/50 rounded-2xl p-12 card-glow">
-          <AlertCircle className="w-16 h-16 text-yellow-500 mx-auto mb-6" />
-          <h2 className="text-2xl font-bold mb-4">Wallet Not Connected</h2>
-          <p className="text-slate-400 mb-6">
-            Please connect your wallet to post a job
-          </p>
+      <div className="max-w-xl mx-auto text-center py-24">
+        <div className="bg-slate-800/40 border border-slate-700/40 rounded-2xl p-10">
+          <div className="inline-flex items-center justify-center w-14 h-14 bg-slate-700/50 rounded-2xl border border-slate-600/40 mb-6">
+            <AlertCircle className="w-7 h-7 text-amber-400" />
+          </div>
+          <h2 className="text-xl font-bold text-white mb-2">Wallet not connected</h2>
+          <p className="text-slate-400 text-sm mb-7">Connect your wallet to post a job on BlockHire</p>
           <button
             onClick={connectWallet}
-            className="bg-gradient-to-r from-primary-500 to-purple-600 text-white px-8 py-3 rounded-xl font-semibold hover:from-primary-600 hover:to-purple-700 transition-all"
+            className="bg-indigo-600 hover:bg-indigo-500 text-white px-7 py-3 rounded-xl font-semibold text-sm transition-all shadow-lg shadow-indigo-600/20"
           >
             Connect Wallet
           </button>
@@ -123,155 +108,133 @@ const CreateJob = () => {
 
   return (
     <div className="max-w-2xl mx-auto">
-      <div className="bg-slate-800/50 rounded-2xl p-8 card-glow">
-        <div className="flex items-center space-x-3 mb-8">
-          <div className="w-12 h-12 bg-gradient-to-br from-primary-500 to-purple-600 rounded-xl flex items-center justify-center">
-            <Briefcase className="w-6 h-6 text-white" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold">Post a New Job</h1>
-            <p className="text-slate-400">Fill in the details below</p>
-          </div>
-        </div>
 
-        <form onSubmit={handleSubmit} className="space-y-6">
-          {/* Title */}
-          <div>
-            <label className="block text-sm font-medium mb-2">
-              Job Title *
-            </label>
+      {/* Header */}
+      <div className="mb-8">
+        <h1 className="text-4xl font-bold text-white mb-1">Post a Job</h1>
+        <p className="text-slate-400 text-sm">Your payment will be secured in a smart contract escrow</p>
+      </div>
+
+      <form onSubmit={handleSubmit}>
+        <div className="bg-slate-800/40 border border-slate-700/40 rounded-2xl p-6 md:p-8 space-y-6">
+
+          <Field label="Job Title" required>
             <input
               type="text"
               name="title"
               value={formData.title}
               onChange={handleChange}
-              placeholder="e.g., Build a React Dashboard"
-              className="w-full bg-slate-700/50 border border-slate-600 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all"
+              placeholder="e.g., Build a React Dashboard with Charts"
+              className={inputClass}
               required
             />
-          </div>
+          </Field>
 
-          {/* Description */}
-          <div>
-            <label className="block text-sm font-medium mb-2">
-              Short Description *
-            </label>
+          <Field label="Short Description" required hint="Shown in job listings">
             <textarea
               name="description"
               value={formData.description}
               onChange={handleChange}
-              placeholder="Brief overview of the project..."
+              placeholder="Brief, clear overview of what you need done..."
               rows={3}
-              className="w-full bg-slate-700/50 border border-slate-600 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all resize-none"
+              className={`${inputClass} resize-none`}
               required
             />
-          </div>
+          </Field>
 
-          {/* Detailed Requirements */}
-          <div>
-            <label className="block text-sm font-medium mb-2">
-              <FileText className="w-4 h-4 inline mr-1" />
-              Detailed Requirements
-            </label>
+          <Field label="Detailed Requirements" hint="Stored on IPFS">
             <textarea
               name="requirements"
               value={formData.requirements}
               onChange={handleChange}
-              placeholder="List all features, specifications, acceptance criteria..."
+              placeholder="Features, acceptance criteria, tech stack, edge cases..."
               rows={5}
-              className="w-full bg-slate-700/50 border border-slate-600 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all resize-none"
+              className={`${inputClass} resize-none`}
             />
-            <p className="text-xs text-slate-500 mt-1">
-              This will be stored on IPFS for transparency
+            <p className="mt-1.5 text-xs text-slate-600 flex items-center gap-1">
+              <FileText className="w-3 h-3" />
+              Stored permanently on IPFS for transparency
             </p>
+          </Field>
+
+          <div className="grid sm:grid-cols-2 gap-5">
+            <Field label="Budget (ETH)" required>
+              <div className="relative">
+                <DollarSign className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-600" />
+                <input
+                  type="number"
+                  name="budget"
+                  value={formData.budget}
+                  onChange={handleChange}
+                  placeholder="0.10"
+                  step="0.001"
+                  min="0.001"
+                  className={`${inputClass} pl-9`}
+                  required
+                />
+              </div>
+            </Field>
+
+            <Field label="Deadline" hint="Optional">
+              <input
+                type="date"
+                name="deadline"
+                value={formData.deadline}
+                onChange={handleChange}
+                className={inputClass}
+              />
+            </Field>
           </div>
 
-          {/* Budget */}
-          <div>
-            <label className="block text-sm font-medium mb-2">
-              <DollarSign className="w-4 h-4 inline mr-1" />
-              Budget (ETH) *
-            </label>
-            <input
-              type="number"
-              name="budget"
-              value={formData.budget}
-              onChange={handleChange}
-              placeholder="0.1"
-              step="0.001"
-              min="0.001"
-              className="w-full bg-slate-700/50 border border-slate-600 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all"
-              required
-            />
-            <p className="text-xs text-slate-500 mt-1">
-              This amount will be locked in the smart contract (2% platform fee applies)
-            </p>
-          </div>
-
-          {/* Skills */}
-          <div>
-            <label className="block text-sm font-medium mb-2">
-              Required Skills
-            </label>
+          <Field label="Required Skills" hint="Comma-separated">
             <input
               type="text"
               name="skills"
               value={formData.skills}
               onChange={handleChange}
-              placeholder="React, Node.js, Solidity (comma separated)"
-              className="w-full bg-slate-700/50 border border-slate-600 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all"
+              placeholder="React, Node.js, Solidity, Python..."
+              className={inputClass}
             />
-          </div>
-
-          {/* Deadline */}
-          <div>
-            <label className="block text-sm font-medium mb-2">
-              Expected Deadline
-            </label>
-            <input
-              type="date"
-              name="deadline"
-              value={formData.deadline}
-              onChange={handleChange}
-              className="w-full bg-slate-700/50 border border-slate-600 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all"
-            />
-          </div>
+          </Field>
 
           {/* Info Box */}
-          <div className="bg-primary-500/10 border border-primary-500/30 rounded-xl p-4">
-            <h3 className="font-semibold text-primary-400 mb-2">How it works:</h3>
-            <ul className="text-sm text-slate-300 space-y-1">
-              <li>• Your payment will be locked in the smart contract</li>
-              <li>• Freelancers can accept and start working</li>
-              <li>• Approve completed work to release payment</li>
-              <li>• Auto-release kicks in after 7 days if no response</li>
-            </ul>
+          <div className="flex gap-3 bg-indigo-500/8 border border-indigo-500/20 rounded-xl p-4">
+            <Lock className="w-4 h-4 text-indigo-400 shrink-0 mt-0.5" />
+            <div className="text-xs text-slate-400 space-y-1 leading-relaxed">
+              <p className="text-indigo-400 font-medium text-sm">How escrow works</p>
+              <p>Your payment locks in the smart contract and only releases when you approve the delivered work. You can cancel anytime before submission.</p>
+            </div>
           </div>
 
-          {/* Submit Button */}
+          {/* Progress Steps */}
+          {isSubmitting && (
+            <div className="flex items-center gap-3 bg-slate-700/30 rounded-xl p-4">
+              <div className="w-5 h-5 border-2 border-indigo-400/30 border-t-indigo-400 rounded-full animate-spin shrink-0" />
+              <div>
+                <p className="text-sm font-medium text-slate-200">{stepLabels[step]}</p>
+                <div className="flex gap-1 mt-2">
+                  {[1, 2, 3].map(s => (
+                    <div key={s} className={`h-1 rounded-full flex-1 transition-all ${step >= s ? 'bg-indigo-500' : 'bg-slate-700'}`} />
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
           <button
             type="submit"
             disabled={isSubmitting}
-            className="w-full bg-gradient-to-r from-primary-500 to-purple-600 hover:from-primary-600 hover:to-purple-700 text-white py-4 rounded-xl font-semibold text-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center space-x-2"
+            className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:bg-indigo-800 disabled:cursor-not-allowed text-white py-3.5 rounded-xl font-semibold text-sm transition-all flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/20"
           >
             {isSubmitting ? (
-              <>
-                <div className="spinner" />
-                <span>
-                  {step === 1 && 'Uploading to IPFS...'}
-                  {step === 2 && 'Confirm in MetaMask...'}
-                  {step === 3 && 'Confirming on blockchain...'}
-                </span>
-              </>
+              <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Working...</>
             ) : (
-              <>
-                <Upload className="w-5 h-5" />
-                <span>Create Job & Lock Payment</span>
-              </>
+              <><Upload className="w-4 h-4" /> Create Job & Lock Payment</>
             )}
           </button>
-        </form>
-      </div>
+
+        </div>
+      </form>
     </div>
   );
 };
